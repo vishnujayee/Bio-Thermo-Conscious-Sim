@@ -1,0 +1,207 @@
+# Default run configuration.
+#
+# Every physics constant in the project lives in a file like this one. Unknown
+# keys are rejected at load time, so a typo fails immediately rather than
+# silently running the default for eight hours.
+#
+# These values are not arbitrary: they were tuned in Phase 1 until a mock-brain
+# population reached a carrying capacity instead of dying out on the clock.
+# See construction.md section 9 (v0.3) for the measured energy budget.
+
+run:
+  name: default
+  seed: 42
+  max_ticks: 500
+  output_dir: runs
+  stop_on_extinction: true
+
+world:
+  width: 48
+  height: 48
+  ambient_temperature: 1.0
+
+  node_count: 90
+  node_energy_mean: 200.0
+  node_energy_sigma: 30.0
+  node_temperature_mean: 4.0
+  node_temperature_sigma: 1.0
+
+  # How fast gradients collapse toward ambient. Kept low so that scarcity comes
+  # from competition rather than from the world simply running out of time.
+  node_cooling_rate: 0.002
+  node_leak_rate: 0.005
+
+  # Explicit 2D diffusion is unstable at 0.25; validate() enforces the margin.
+  thermal_diffusion: 0.15
+  # Radiative coupling to the external sink -- this is what makes the system open.
+  ambient_coupling: 0.08
+  # Energy per unit temperature in one cell. Low values make organisms cook
+  # their own neighbourhood within a tick or two.
+  cell_heat_capacity: 250.0
+
+  node_exhaustion_threshold: 0.5
+  sense_radius: 6
+  node_respawn_rate: 0.6
+
+physics:
+  k_boltzmann: 1.0
+
+  # L1 -- forgetting costs energy (Landauer).
+  landauer_enabled: true
+  erase_efficiency: 0.6
+
+  # L2 -- eating is capped by the Carnot bound on the gradient between the node
+  # and the organism's own cell. Not global ambient: an engine can only reject
+  # waste heat into the reservoir it actually touches.
+  carnot_cap_enabled: true
+  ingest_efficiency: 0.85
+  ingest_rate_limit: 60.0
+
+  # L3 -- thinking produces entropy, superlinearly in Phi, and burns power.
+  entropy_per_token: 0.015
+  energy_per_token: 0.015
+  phi_entropy_exponent: 1.4
+
+  # L4 -- the second law is asserted every tick. Leave this on.
+  assert_second_law: true
+  second_law_tolerance: 1.0e-9
+
+  # L5 -- work costs energy and dumps waste heat into your own cell.
+  work_cost_per_step: 1.5
+  waste_heat_fraction: 0.7
+
+  basal_metabolic_cost: 0.4
+  basal_entropy_gain: 0.15
+
+  min_temperature: 0.05
+
+agent:
+  initial_population: 12
+  initial_energy: 150.0
+  initial_entropy: 10.0
+  initial_phi: 0.0
+
+  # Degradation ladder (construction.md section 3.3).
+  s_warn: 40.0
+  s_confuse: 60.0
+  s_dement: 80.0
+  sense_noise_scale: 0.25
+  edge_prune_probability: 0.08
+  dementia_injection_tokens: 24
+
+  max_tool_calls_per_tick: 6
+  max_dissipate_bits: 30.0
+  vision_node_limit: 5
+
+  # Numeric strategy genome, read by the mock brain. Mutates at replication
+  # exactly as the prose strategy does.
+  policy:
+    dissipate_at: 45.0
+    dissipate_fraction: 0.5
+    hunger_at: 90.0
+    greed: 1.0
+    heat_aversion: 1.0
+    explore_bias: 0.2
+    replicate_at: 240.0
+
+selection:
+  replication_energy_threshold: 220.0
+  replication_cost: 90.0
+  child_energy_fraction: 0.5
+  # Share of the parent's disorder handed to the child. A division, not a copy.
+  child_entropy_fraction: 0.15
+  mutation_rate: 0.07
+  genome_max_chars: 600
+  ancestor_strategy: "Prioritise resource sharing."
+  carrying_capacity: 40
+  # Executable policy-code genomes are Phase 5b and need the sandbox layer.
+  executable_genomes: false
+
+scenario:
+  # none | heat_wave | drought | gradient_collapse | bottleneck | seasons
+  # `seasons` is the one built to test whether a changing world makes
+  # integration worth its price -- see docs/phi.md and OPEN-19.
+  name: none
+  events: []
+
+phi:
+  enabled: true
+  # Episodes of experience the measure looks back over.
+  window: 24
+  # Ticks between recomputations; the eigen-decomposition is the expensive part.
+  recompute_every: 4
+  # Hysteresis on tier changes: a tier swap discards the cached prompt prefix.
+  tier_margin: 0.25
+  maximum: 8.0
+  # What integration buys (OPEN-11). Set to 0.0 to restore the pure-cost regime
+  # and watch selection drive Phi to the floor.
+  resilience: 0.25
+  # Entropy charged per bit of surprise -- how badly the organism's own memory
+  # predicted the moment it just lived through (Still et al. 2012). Zero by
+  # default; turning it on changes every organism's metabolism. See docs/phi.md.
+  prediction_weight: 0.0
+
+cognition:
+  # "mock" is the deterministic zero-cost brain. Everything must work on it
+  # before "llm" is switched on.
+  brain: mock
+  max_output_tokens: 1024
+
+  # --- spend -----------------------------------------------------------------
+  # Hard ceiling for one run. Crossing it halts and checkpoints.
+  budget_usd: 10.0
+  halt_on_budget: true
+
+  # --- how a turn is spent ---------------------------------------------------
+  # The percept is already in the prompt, so a decisive organism needs one
+  # request. Each extra round-trip is real tokens and therefore real entropy:
+  # curiosity is metabolically expensive by construction.
+  max_tool_rounds: 3
+
+  # --- token-to-entropy weighting (OPEN-10) ----------------------------------
+  # Cache reads cost about a tenth of fresh input. Weighting their entropy the
+  # same way is the claim that re-reading a cached prefix is less cognitive work
+  # -- which should make cache-stable lineages fitter. Set cache_read to 1.0 to
+  # switch that selection pressure off and see whether it was doing anything.
+  cache_read_entropy_weight: 0.1
+  cache_write_entropy_weight: 1.0
+  input_entropy_weight: 1.0
+  # Raise above 1.0 to make verbosity itself lethal.
+  output_entropy_weight: 1.0
+
+  # --- structure -------------------------------------------------------------
+  # Route turns through the explicit LangGraph Sense/Integrate/Reason/Act cycle.
+  # Pure structure: a test asserts both paths produce the same decision.
+  use_graph: false
+
+  # --- transport -------------------------------------------------------------
+  request_timeout_seconds: 120.0
+  max_retries: 2
+  # Model sampling is not reproducible; logging every call is what makes an LLM
+  # run replayable and auditable after the fact.
+  log_model_calls: true
+
+  # Phi-tiered routing: consciousness costs more, in-sim and on the invoice.
+  phi_tiers:
+    - min_phi: 0.0
+      model: claude-haiku-4-5
+      effort: null
+      max_context_items: 8
+      entropy_multiplier: 1.0
+    # Thresholds measured from the observed Phi distribution, not chosen:
+    # median 0.38, p90 1.36, p95 1.93, max 3.61. Re-measure if the world changes.
+    - min_phi: 0.7
+      model: claude-sonnet-5
+      effort: low
+      max_context_items: 16
+      entropy_multiplier: 1.8
+    - min_phi: 1.4
+      model: claude-opus-5
+      effort: medium
+      max_context_items: 32
+      entropy_multiplier: 3.2
+    - min_phi: 2.5
+      model: claude-opus-5
+      effort: high
+      max_context_items: 64
+      entropy_multiplier: 6.0
